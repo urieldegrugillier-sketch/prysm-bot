@@ -1,19 +1,17 @@
 import asyncio
 import logging
 import re
-import os
-from datetime import datetime
 from playwright.async_api import async_playwright
 import httpx
 
 # ============================================================
-#  CONFIGURATION — Remplis ces 3 valeurs
+#  CONFIGURATION — Remplis ces valeurs
 # ============================================================
-PRYSM_EMAIL    = "urieldegrugillier@gmail.com"
-PRYSM_PASSWORD = "Deg2005U!"
-TELEGRAM_TOKEN = "8225809582:AAFwsUQRVW-gx4y9QuAETowHqye2-3e76kI"
+PRYSM_EMAIL      = "TON_EMAIL@example.com"
+PRYSM_PASSWORD   = "TON_MOT_DE_PASSE"
+TELEGRAM_TOKEN   = "8225809582:AAFwsUQRVW-gx4y9QuAETowHqye2-3e76kI"
 TELEGRAM_CHAT_ID = "-1003358493754"
-INTERVAL_MINUTES = 12   # Intervalle entre chaque scan (en minutes)
+INTERVAL_MINUTES = 12
 # ============================================================
 
 logging.basicConfig(
@@ -28,7 +26,6 @@ log = logging.getLogger(__name__)
 
 
 async def send_telegram(message: str):
-    """Envoie un message dans le groupe Telegram."""
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     async with httpx.AsyncClient() as client:
         resp = await client.post(url, json={
@@ -43,16 +40,12 @@ async def send_telegram(message: str):
 
 
 def parse_signal(text: str) -> dict | None:
-    """
-    Extrait les données du bloc signal Prysm.
-    Format attendu : XAU/USD HH:MM BUY/SELL Entry X.XX Take Profit X.XX Stop Loss X.XX
-    """
     direction = None
     if "BUY" in text.upper():
         direction = "BUY"
     elif "SELL" in text.upper():
         direction = "SELL"
-    
+
     if not direction:
         return None
 
@@ -72,7 +65,6 @@ def parse_signal(text: str) -> dict | None:
 
 
 def format_telegram_message(signal: dict) -> str:
-    """Formate le message dans le format attendu par Social Trade Hub."""
     return (
         f"XAUUSD {signal['direction']}\n"
         f"PE : {signal['entry']}\n"
@@ -82,36 +74,24 @@ def format_telegram_message(signal: dict) -> str:
 
 
 async def scan_prysm(page) -> str | None:
-    """
-    Clique sur View Signals, attend le scan, et retourne le texte du signal
-    ou None si aucun signal trouvé.
-    """
     log.info("🔍 Scan Prysm en cours...")
-
     try:
-        # Clique sur le bouton View Signals / Scan Market
         btn = page.locator("button", has_text=re.compile(r"View Signals|Scan Market", re.I))
         await btn.first.click()
-
-        # Attend que le scan soit terminé (bouton revient ou signal apparaît)
-        # On attend max 60 secondes
         await page.wait_for_timeout(3000)
 
-        # Attend la fin du scanning (disparition du %)
         for _ in range(30):
             content = await page.inner_text("body")
             if "Scanning" not in content:
                 break
             await page.wait_for_timeout(2000)
 
-        # Relit le contenu final
         content = await page.inner_text("body")
 
-        # Vérifie si un signal est présent
         if "BUY" in content.upper() or "SELL" in content.upper():
             return content
         else:
-            log.info(f"ℹ️ Pas de signal : {content[200:350].strip()}")
+            log.info(f"ℹ️ Pas de signal : {content[200:400].strip()}")
             return None
 
     except Exception as e:
@@ -120,25 +100,74 @@ async def scan_prysm(page) -> str | None:
 
 
 async def login_prysm(page):
-    """Se connecte à Prysm Intelligence."""
+    """Se connecte à Prysm : page d'accueil → Connect → Sign In → email/mdp"""
     log.info("🔐 Connexion à Prysm...")
-    await page.goto("https://prysmintelligence.app/auth")
+
+    # Étape 1 : page d'accueil
+    await page.goto("https://prysmintelligence.app/")
+    await page.wait_for_load_state("networkidle")
     await page.wait_for_timeout(2000)
 
-    await page.fill("input[type='email']", PRYSM_EMAIL)
-    await page.fill("input[type='password']", PRYSM_PASSWORD)
-    await page.click("button[type='submit']")
-    await page.wait_for_timeout(3000)
+    # Étape 2 : cliquer sur le bouton "Connect" en haut à droite
+    try:
+        connect_btn = page.locator("a, button", has_text=re.compile(r"Connect", re.I))
+        await connect_btn.first.click()
+        log.info("✅ Bouton Connect cliqué")
+        await page.wait_for_load_state("networkidle")
+        await page.wait_for_timeout(2000)
+    except Exception as e:
+        log.error(f"❌ Bouton Connect introuvable : {e}")
 
-    if "auth" not in page.url:
-        log.info("✅ Connecté à Prysm")
+    log.info(f"📄 URL après Connect : {page.url}")
+
+    # Étape 3 : cliquer sur Sign In si présent
+    try:
+        signin_btn = page.locator("button, a", has_text=re.compile(r"Sign[- ]?[Ii]n|Login", re.I))
+        count = await signin_btn.count()
+        if count > 0:
+            await signin_btn.first.click()
+            log.info("✅ Bouton Sign In cliqué")
+            await page.wait_for_timeout(2000)
+    except Exception as e:
+        log.warning(f"⚠️ Pas de bouton Sign In : {e}")
+
+    # Étape 4 : remplir email et mot de passe
+    try:
+        await page.fill("input[type='email']", PRYSM_EMAIL, timeout=10000)
+        log.info("✅ Email rempli")
+    except Exception as e:
+        log.error(f"❌ Champ email introuvable : {e}")
+
+    try:
+        await page.fill("input[type='password']", PRYSM_PASSWORD, timeout=10000)
+        log.info("✅ Password rempli")
+    except Exception as e:
+        log.error(f"❌ Champ password introuvable : {e}")
+
+    # Étape 5 : soumettre
+    try:
+        submit = page.locator("button[type='submit']")
+        count = await submit.count()
+        if count > 0:
+            await submit.first.click()
+            log.info("✅ Bouton submit cliqué")
+        else:
+            await page.keyboard.press("Enter")
+            log.info("✅ Enter pressé")
+    except Exception as e:
+        log.error(f"❌ Erreur soumission : {e}")
+
+    await page.wait_for_timeout(4000)
+    log.info(f"📄 URL après login : {page.url}")
+
+    if "auth" not in page.url and "login" not in page.url:
+        log.info("✅ Connecté à Prysm avec succès !")
     else:
-        log.warning("⚠️ Connexion peut-être échouée, vérifie tes identifiants")
+        log.warning("⚠️ Toujours sur la page auth — vérifie email/mot de passe dans le script")
 
 
 async def main():
     log.info("🚀 Démarrage du bot Prysm → Telegram")
-    await send_telegram("🤖 <b>Bot Prysm démarré</b>\nScan toutes les " + str(INTERVAL_MINUTES) + " minutes.")
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -149,7 +178,7 @@ async def main():
         await page.goto("https://prysmintelligence.app/")
         await page.wait_for_timeout(2000)
 
-        last_signal = None  # Evite d'envoyer le même signal deux fois
+        last_signal = None
 
         while True:
             try:
@@ -159,7 +188,6 @@ async def main():
                     signal = parse_signal(raw)
                     if signal:
                         msg = format_telegram_message(signal)
-                        # Evite les doublons consécutifs
                         if msg != last_signal:
                             await send_telegram(msg)
                             last_signal = msg
@@ -170,7 +198,6 @@ async def main():
 
             except Exception as e:
                 log.error(f"❌ Erreur dans la boucle principale : {e}")
-                # Tente de recharger la page en cas de problème
                 try:
                     await page.reload()
                     await page.wait_for_timeout(3000)
