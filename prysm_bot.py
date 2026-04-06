@@ -11,7 +11,7 @@ PRYSM_EMAIL      = "urieldegrugillier@gmail.com"
 PRYSM_PASSWORD   = "Deg2005U!"
 TELEGRAM_TOKEN   = "8225809582:AAFwsUQRVW-gx4y9QuAETowHqye2-3e76kI"
 TELEGRAM_CHAT_ID = "-1003358493754"
-INTERVAL_MINUTES = 12
+INTERVAL_MINUTES = 6
 # ============================================================
 
 logging.basicConfig(
