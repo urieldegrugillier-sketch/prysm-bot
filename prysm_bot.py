@@ -5,10 +5,10 @@ from playwright.async_api import async_playwright
 import httpx
 
 # ============================================================
-#  CONFIGURATION 
+#  CONFIGURATION — Remplis ces valeurs
 # ============================================================
-PRYSM_EMAIL      = "urieldegrugillier@gmail.com"
-PRYSM_PASSWORD   = "Deg2005U!"
+PRYSM_EMAIL      = "TON_EMAIL@example.com"
+PRYSM_PASSWORD   = "TON_MOT_DE_PASSE"
 TELEGRAM_TOKEN   = "8225809582:AAFwsUQRVW-gx4y9QuAETowHqye2-3e76kI"
 TELEGRAM_CHAT_ID = "-1003358493754"
 INTERVAL_MINUTES = 4
@@ -40,27 +40,33 @@ async def send_telegram(message: str):
 
 
 def parse_signal(text: str) -> dict | None:
-    direction = None
-    if "BUY" in text.upper():
-        direction = "BUY"
-    elif "SELL" in text.upper():
-        direction = "SELL"
+    """
+    Cherche un bloc signal complet avec Entry, Take Profit, Stop Loss.
+    Détermine BUY ou SELL uniquement dans ce bloc, pas ailleurs sur la page.
+    """
+    # Cherche un bloc qui contient Entry + Take Profit + Stop Loss
+    bloc = re.search(
+        r"(BUY|SELL).*?Entry\s+([\d,\.]+).*?Take Profit\s+([\d,\.]+).*?Stop Loss\s+([\d,\.]+)",
+        text,
+        re.IGNORECASE | re.DOTALL
+    )
 
-    if not direction:
+    if not bloc:
+        log.info("ℹ️ Aucun bloc signal complet trouvé sur la page")
         return None
 
-    entry = re.search(r"Entry\s+([\d,\.]+)", text)
-    tp    = re.search(r"Take Profit\s+([\d,\.]+)", text)
-    sl    = re.search(r"Stop Loss\s+([\d,\.]+)", text)
+    direction = bloc.group(1).upper()
+    entry = bloc.group(2).replace(",", "")
+    tp    = bloc.group(3).replace(",", "")
+    sl    = bloc.group(4).replace(",", "")
 
-    if not (entry and tp and sl):
-        return None
+    log.info(f"📊 Signal parsé : {direction} | Entry={entry} | TP={tp} | SL={sl}")
 
     return {
         "direction": direction,
-        "entry": entry.group(1).replace(",", ""),
-        "tp":    tp.group(1).replace(",", ""),
-        "sl":    sl.group(1).replace(",", ""),
+        "entry": entry,
+        "tp":    tp,
+        "sl":    sl,
     }
 
 
@@ -88,14 +94,30 @@ async def scan_prysm(page) -> str | None:
 
         content = await page.inner_text("body")
 
-        if "BUY" in content.upper() or "SELL" in content.upper():
+        # Vérifie qu'un bloc signal complet est présent (Entry + Take Profit + Stop Loss)
+        if re.search(r"Entry\s+[\d,\.]+.*?Take Profit\s+[\d,\.]+.*?Stop Loss\s+[\d,\.]+", content, re.DOTALL):
             return content
         else:
-            log.info(f"ℹ️ Pas de signal : {content[200:400].strip()}")
+            log.info(f"ℹ️ Pas de signal complet : {content[200:400].strip()}")
             return None
 
     except Exception as e:
         log.error(f"❌ Erreur pendant le scan : {e}")
+        # Tente de recharger et se reconnecter
+        try:
+            log.info("🔄 Tentative de reconnexion...")
+            await page.goto("https://prysmintelligence.app/")
+            await page.wait_for_load_state("networkidle")
+            await page.wait_for_timeout(3000)
+            # Vérifie si on est toujours connecté
+            content = await page.inner_text("body")
+            if "Connect" in content and "View Signals" not in content:
+                log.info("🔐 Session expirée, reconnexion...")
+                await login_prysm(page)
+                await page.goto("https://prysmintelligence.app/")
+                await page.wait_for_timeout(2000)
+        except Exception as e2:
+            log.error(f"❌ Erreur reconnexion : {e2}")
         return None
 
 
@@ -103,12 +125,10 @@ async def login_prysm(page):
     """Se connecte à Prysm : page d'accueil → Connect → Sign In → email/mdp"""
     log.info("🔐 Connexion à Prysm...")
 
-    # Étape 1 : page d'accueil
     await page.goto("https://prysmintelligence.app/")
     await page.wait_for_load_state("networkidle")
     await page.wait_for_timeout(2000)
 
-    # Étape 2 : cliquer sur le bouton "Connect" en haut à droite
     try:
         connect_btn = page.locator("a, button", has_text=re.compile(r"Connect", re.I))
         await connect_btn.first.click()
@@ -120,7 +140,6 @@ async def login_prysm(page):
 
     log.info(f"📄 URL après Connect : {page.url}")
 
-    # Étape 3 : cliquer sur Sign In si présent
     try:
         signin_btn = page.locator("button, a", has_text=re.compile(r"Sign[- ]?[Ii]n|Login", re.I))
         count = await signin_btn.count()
@@ -131,7 +150,6 @@ async def login_prysm(page):
     except Exception as e:
         log.warning(f"⚠️ Pas de bouton Sign In : {e}")
 
-    # Étape 4 : remplir email et mot de passe
     try:
         await page.fill("input[type='email']", PRYSM_EMAIL, timeout=10000)
         log.info("✅ Email rempli")
@@ -144,7 +162,6 @@ async def login_prysm(page):
     except Exception as e:
         log.error(f"❌ Champ password introuvable : {e}")
 
-    # Étape 5 : soumettre
     try:
         submit = page.locator("button[type='submit']")
         count = await submit.count()
@@ -194,7 +211,7 @@ async def main():
                         else:
                             log.info("⏭️ Signal identique au précédent, ignoré")
                     else:
-                        log.warning("⚠️ Signal détecté mais parsing échoué")
+                        log.info("ℹ️ Pas de signal trouvé ce scan")
 
             except Exception as e:
                 log.error(f"❌ Erreur dans la boucle principale : {e}")
