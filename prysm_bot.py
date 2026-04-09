@@ -5,7 +5,7 @@ from playwright.async_api import async_playwright
 import httpx
 
 # ============================================================
-#  CONFIGURATION
+#  CONFIGURATION 
 # ============================================================
 PRYSM_EMAIL      = "urieldegrugillier@gmail.com"
 PRYSM_PASSWORD   = "Deg2005U!"
