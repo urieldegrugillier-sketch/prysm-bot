@@ -5,9 +5,9 @@ from playwright.async_api import async_playwright
 import httpx
 
 # ============================================================
-#  CONFIGURATION — Remplis ces valeurs
+#  CONFIGURATION
 # ============================================================
-PRYSM_EMAIL      = "urieldegugillier@gmail.com"
+PRYSM_EMAIL      = "urieldegrugillier@gmail.com"
 PRYSM_PASSWORD   = "Deg2005U!"
 TELEGRAM_TOKEN   = "8225809582:AAFwsUQRVW-gx4y9QuAETowHqye2-3e76kI"
 TELEGRAM_CHAT_ID = "-1003358493754"
