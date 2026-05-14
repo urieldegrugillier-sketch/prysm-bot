@@ -2,9 +2,12 @@ FROM mcr.microsoft.com/playwright/python:v1.58.0-jammy
 
 WORKDIR /app
 
+# Copier et installer les dépendances Python
 COPY requirements.txt .
-RUN pip install -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
-COPY prysm_bot.py .
+# Copier le code source
+COPY bot.py .
 
-CMD ["python", "prysm_bot.py"]
+# Lancer le bot (flag -u pour ne pas bufferiser les logs)
+CMD ["python", "-u", "bot.py"]
